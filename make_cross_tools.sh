@@ -1,5 +1,20 @@
 #!/bin/bash
 
+BUILD_TYPE="shared"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --static)
+      BUILD_TYPE="static"
+      shift
+      ;;
+    *)
+      echo "Usage: $0 [--static]"
+      exit 1
+      ;;
+  esac
+done
+
 function init() {
   echo "Clean cross-tools and builddir"
   rm ${CROSS_TOOLS} -rf
@@ -50,14 +65,14 @@ function mk_binutils() {
     mkdir -p build
     cd build
     rm ./* -rf
-    CC=gcc AR=ar AS=as ../configure \
+    CC=gcc AR=ar AS=as LDFLAGS=${BINUTILS_LDFLAGS} ../configure \
       --prefix=${CROSS_TOOLS} \
       --build=${CROSS_HOST} \
       --host=${CROSS_HOST} \
       --target=${CROSS_TARGET} \
       --with-sysroot=${SYSROOT} \
       --disable-nls \
-      --disable-static \
+      ${STATIC_FLAG} \
       --disable-werror \
       --enable-64-bit-bfd \
       --disable-gdb \
@@ -67,7 +82,7 @@ function mk_binutils() {
       echo "[Error] Cannot configure binutils!";
       return 1;
     fi;
-    make configure-host >> ${LOGFILE} 2>&1
+    make configure-host -j${NRJOBS} >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
       echo "[Error] Cannot make configure host binutils!";
       return 1;
@@ -92,7 +107,7 @@ function mk_gmp_mpfr_mpc_isl() {
     make clean > /dev/null 2>&1
     ./configure \
       --prefix=${CROSS_TOOLS} \
-      --enable-cxx --disable-static \
+      --enable-cxx ${STATIC_FLAG} \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
       echo "[Error] Cannot configure gmp!";
@@ -112,7 +127,7 @@ function mk_gmp_mpfr_mpc_isl() {
     make clean > /dev/null 2>&1
     ./configure \
       --prefix=${CROSS_TOOLS} \
-      --disable-static \
+      ${STATIC_FLAG} \
       --with-gmp=${CROSS_TOOLS} \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
@@ -133,7 +148,7 @@ function mk_gmp_mpfr_mpc_isl() {
     make clean > /dev/null 2>&1
     ./configure \
       --prefix=${CROSS_TOOLS} \
-      --disable-static \
+      ${STATIC_FLAG} \
       --with-gmp=${CROSS_TOOLS} \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
@@ -154,7 +169,7 @@ function mk_gmp_mpfr_mpc_isl() {
     make clean > /dev/null 2>&1
     ./configure \
       --prefix=${CROSS_TOOLS} \
-      --disable-static \
+      ${STATIC_FLAG} \
       --with-gmp=${CROSS_TOOLS} \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
@@ -180,7 +195,7 @@ function mk_simple_gcc() {
     mkdir -p build
     cd build
     rm ./* -rf
-    AR=ar LDFLAGS="-Wl,-rpath,${CROSS_TOOLS}/lib" ../configure \
+    AR=ar LDFLAGS="${SIMPLE_GCC_LDFLAGS}" ../configure \
       --prefix=${CROSS_TOOLS} \
       --build=${CROSS_HOST} \
       --host=${CROSS_HOST} \
@@ -199,11 +214,13 @@ function mk_simple_gcc() {
       --disable-libsanitizer \
       --disable-libquadmath \
       --disable-threads \
+      --disable-libatomic \
       --disable-target-zlib \
       --with-system-zlib \
       --enable-checking=release \
       --enable-default-pie \
       --enable-languages=c \
+      ${STATIC_FLAG} \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
       echo "[Error] Cannot configure gcc(simple)!";
@@ -244,7 +261,7 @@ function mk_glibc() {
       --enable-add-ons \
       --disable-werror \
       libc_cv_slibdir=/usr/lib64 \
-      --enable-kernel=4.15 \
+      --enable-kernel=5.19 \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
       echo "[Error] Cannot configure glibc!";
@@ -275,7 +292,7 @@ function mk_gcc() {
     mkdir -p build-all
     cd build-all
     rm ./* -rf
-    AR=ar LDFLAGS="-Wl,-rpath,${CROSS_TOOLS}/lib" ../configure \
+    AR=ar LDFLAGS="${GCC_LDFLAGS}" ../configure \
       --prefix=${CROSS_TOOLS} \
       --build=${CROSS_HOST} \
       --host=${CROSS_HOST} \
@@ -293,6 +310,7 @@ function mk_gcc() {
       --enable-checking=release \
       --enable-default-pie \
       --enable-languages=c,c++,fortran,objc,obj-c++,lto \
+      ${STATIC_FLAG} \
       >> ${LOGFILE} 2>&1
     if [ $? != 0 ]; then
       echo "[Error] Cannot configure gcc(all)!";
@@ -313,9 +331,6 @@ NRJOBS=16
 TIME=$(date "+%Y%m%d%H%M%S")
 TMP="/tmp"
 SYSDIR=`pwd`
-CROSS_TOOLS=${SYSDIR}/cross-tools
-SYSROOT=${CROSS_TOOLS}/sysroot
-BUILDDIR=${SYSDIR}/build
 SRCDIR=${SYSDIR}/downloads
 SRC_PATH_GCC=${SRCDIR}/gcc
 SRC_PATH_BINUTILS=${SRCDIR}/binutils-gdb
@@ -325,6 +340,31 @@ GZ_SRC_PATH_GMP=${SRCDIR}/gmp-6.3.0.tar.gz
 GZ_SRC_PATH_MPFR=${SRCDIR}/mpfr-4.2.1.tar.gz
 GZ_SRC_PATH_MPC=${SRCDIR}/mpc-1.3.1.tar.gz
 GZ_SRC_PATH_ISL=${SRCDIR}/isl-0.24.tar.gz
+
+if [ "${BUILD_TYPE}" = "static" ]; then
+  CROSS_TOOLS=${SYSDIR}/cross-tools-static
+  SYSROOT=${CROSS_TOOLS}/sysroot-static
+  BUILDDIR=${SYSDIR}/build-static
+  STATIC_FLAG="--enable-static"
+
+  BINUTILS_LDFLAGS="--static"
+
+  SIMPLE_GCC_LDFLAGS="-static -Wl,-rpath,${CROSS_TOOLS}/lib"
+
+  GCC_LDFLAGS="-static -Wl,-rpath,${CROSS_TOOLS}/lib"
+else
+  CROSS_TOOLS=${SYSDIR}/cross-tools
+  SYSROOT=${CROSS_TOOLS}/sysroot
+  BUILDDIR=${SYSDIR}/build
+  STATIC_FLAG="--disable-static"
+
+  BINUTILS_LDFLAGS=""
+
+  SIMPLE_GCC_LDFLAGS="-Wl,-rpath,${CROSS_TOOLS}/lib"
+
+  GCC_LDFLAGS="-Wl,-rpath,${CROSS_TOOLS}/lib"
+fi
+
 MK_PATH_LINUX=${BUILDDIR}/linux
 MK_PATH_GCC=${BUILDDIR}/gcc
 MK_PATH_BINUTILS=${BUILDDIR}/binutils-gdb
@@ -349,6 +389,8 @@ PATH=${SYSDIR}/cross-tools/bin:${PATH}
 
 unset CFLAGS
 unset CXXFLAGS
+
+echo "Build type: ${BUILD_TYPE}"
 
 init
 mk_linux_headers || exit
